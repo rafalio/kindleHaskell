@@ -15,17 +15,50 @@ data Highlight = Highlight  {
   bContent :: String
 } deriving (Eq, Show)
 
+
+{-
+ Possible options for the highlight location:
+
+ Highlight Loc. 1714-16
+ Highlight on Page 961
+
+ Title line := anychars '(' author ')' endOfLine
+ author := anychars
+
+  (a b c)
+  (a (b d) c)
+
+-}
+
+data RTree a = Leaf a | Node [RTree a] deriving (Eq, Show)
+
+parseParenExpr :: HighlightParser (RTree String)
+parseParenExpr = leaf <|> tree
+  where
+    tree = do
+      char '('
+      ls <- many1 parseParenExpr
+      char ')'
+      return $ Node ls
+    leaf = many1 (noneOf "()") >>= return . Leaf
+
 main :: IO ()
 main = do
-  f <- readFile "/Users/rafal/Desktop/kindleTagOne.txt"
-  print f
-  parseTest parseHighlight f
+  f <- readFile "/Users/rafal/Desktop/manyTags"
+--  print f
+  parseTest parseHighlights f
 
 nat :: HighlightParser Int
 nat = many1 digit >>= return . read
 
 type HighlightParser = Parsec String ()
 
+
+
+parseHighlights :: HighlightParser [Highlight]
+parseHighlights = many1 unitParser
+  where
+    unitParser = parseHighlight >>= \h -> skipMany (char '=') >> (endOfLine >> return ()) >> return h
 
 zeroWidthSpace = char '\65279'
 
@@ -35,8 +68,8 @@ parseBook = do
   author <- authorParser
   return $ Book (concat . intersperse " " $ title) author
   where
-    bookTitleParser = skipMany zeroWidthSpace >> sepBy1 (many alphaNum) space
-    authorParser = between (char '(') (char ')') (many (letter <|> space <|> oneOf ".'"))
+    bookTitleParser = skipMany zeroWidthSpace >> sepBy1 (many (alphaNum <|> oneOf ":'")) space
+    authorParser = between (char '(') (char ')') (many (letter <|> space <|> oneOf ".,'"))
 
 parseHighlight :: HighlightParser Highlight
 parseHighlight = do
@@ -51,7 +84,7 @@ lexeme :: Parsec String u a -> Parsec String u a
 lexeme p = p >>= \x -> spaces >> return x
 
 parseHighlightPage :: HighlightParser Int
-parseHighlightPage = string "Highlight on Page" >> space >> nat
+parseHighlightPage = (string "Highlight" <|> string "Bookmark") >> spaces >> string "on Page" >> space >> nat
 
 parseLoc :: HighlightParser String
 parseLoc = string "Loc." >> spaces >> many1 (digit <|> char '-')
