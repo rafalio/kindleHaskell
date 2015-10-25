@@ -1,7 +1,8 @@
 {-# LANGUAGE GADTs #-}
 
-import Control.Monad
 import Text.Parsec
+import qualified Data.Map.Lazy as Map
+import Control.Applicative hiding ((<|>), many)
 
 
 {-
@@ -15,14 +16,17 @@ term := '(' e ')'
 
 -}
 
-data Expr      = ExprInt Int
-               | BinExpr Expr BinOp Expr
-               | Var String
-               deriving (Eq, Show)
+data Expr =    ExprInt Int
+             | BinExpr Expr BinOp Expr
+             | Var String
+             deriving (Eq, Show)
 
 data BinOp = Add | Sub deriving (Eq, Show)
 
 type SimpleParser a = Parsec String () a
+type Ident = String
+
+type ExprEnv = Map.Map Ident Int
 
 lexeme :: Parsec String u a -> Parsec String u a
 lexeme p = p >>= \x -> (skipMany space) >> return x
@@ -51,10 +55,14 @@ parseNumExpr = do
   rest <- many (parseBinOp >>= \op -> term >>= \t -> return (op,t))
   return $ foldl (\x (f, y) -> BinExpr x f y) t rest
 
-evalExpr :: Expr -> Int
-evalExpr (ExprInt i)    = i
-evalExpr (BinExpr l Add r)  = (evalExpr l) + (evalExpr r)
-evalExpr (BinExpr l Sub r)  = (evalExpr l) - (evalExpr r)
+evalExpr :: Expr -> ExprEnv -> Maybe Int
+evalExpr (ExprInt i) env = Just i
+evalExpr (BinExpr l Add r) env = liftA2 (+) (evalExpr l env) (evalExpr r env)
+evalExpr (BinExpr l Sub r) env = liftA2 (-) (evalExpr l env) (evalExpr r env)
+evalExpr (Var v) env = Map.lookup v env
+
+sampleEnv :: ExprEnv
+sampleEnv = Map.fromList [("x",20)]
 
 main :: IO ()
 main = undefined
