@@ -93,7 +93,6 @@ evalCalcExpr (EffectExpr e) env = do
 sampleEnv :: ExprEnv
 sampleEnv = Map.fromList [("x",20)]
 
-
 main :: IO ()
 main = calcLoop mempty
 
