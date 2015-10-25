@@ -55,11 +55,13 @@ parseNumExpr = do
   rest <- many (parseBinOp >>= \op -> term >>= \t -> return (op,t))
   return $ foldl (\x (f, y) -> BinExpr x f y) t rest
 
-evalExpr :: Expr -> ExprEnv -> Maybe Int
-evalExpr (ExprInt i) env = Just i
+evalExpr :: Expr -> ExprEnv -> Either String Int
+evalExpr (ExprInt i) env = Right i
 evalExpr (BinExpr l Add r) env = liftA2 (+) (evalExpr l env) (evalExpr r env)
 evalExpr (BinExpr l Sub r) env = liftA2 (-) (evalExpr l env) (evalExpr r env)
-evalExpr (Var v) env = Map.lookup v env
+evalExpr (Var v) env = case Map.lookup v env of
+  Nothing -> Left $ "Unknown variable: " ++ v
+  Just val -> Right val
 
 sampleEnv :: ExprEnv
 sampleEnv = Map.fromList [("x",20)]
