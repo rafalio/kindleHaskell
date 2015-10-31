@@ -3,6 +3,17 @@ import Text.Parsec
 import Data.List
 import System.Environment
 import Data.Maybe
+import Data.Char
+import Data.Function
+
+import Text.Pandoc.Definition
+import Text.Pandoc.Writers.Markdown
+import Text.Pandoc.Options
+
+
+import Data.Default
+import qualified Data.Map.Lazy as M
+import qualified Data.Set as Set
 
 data Book = Book {
   bTitle :: String,
@@ -15,6 +26,12 @@ data Highlight = Highlight  {
   bLoc :: String,
   bTime :: String,
   bContent :: String
+} deriving (Eq, Show)
+
+
+data BookHighlights = BookHighlights {
+  highlightsBook :: Book,
+  highlights :: [Highlight]
 } deriving (Eq, Show)
 
 {-
@@ -50,7 +67,17 @@ main = do
   args <- getArgs
   let filename = head args
   f <- readFile filename
-  parseTest parseHighlights f
+  let e = parse parseHighlights "" f
+  either (\a -> print $ "Parsing failed: " ++ (show a))
+         (\v -> writeFile "kindle_book_highlights.markdown"
+                          (writeMarkdown writerOpts (highlightsToPandoc $ groupHighlights v) )
+         )
+         e
+  where
+    writerOpts = def { writerStandalone = True,
+                      writerTemplate = "$titleblock$\n\n$body$"}
+
+
 
 nat :: HighlightParser Int
 nat = many1 digit >>= return . read
@@ -76,7 +103,7 @@ manyTill2 p end = scan
 parseBook :: HighlightParser Book
 parseBook = do
   (title, author) <- manyTill2 anyChar (try authorParser)
-  return $ Book title author
+  return $ Book (trim title) author
   where
     authorParser = between (char '(') (char ')') (many $ noneOf "()") >>= \a -> (eof <|> (endOfLine >> return ())) >> return a
 
@@ -129,6 +156,36 @@ parseDataLine = do
         time <- lexeme parseAddedTime
         return (page,loc,time)
 
+
+-- Sample stuff
+
 sampleStr = "Technological Slavery (Theodore J. Kaczynski)"
 sampleHighlightPage = "Highlight on Page 29"
 sampleDataLine = "- Highlight on Page 1089 | Loc. 16686-90  | Added on Wednesday, 4 January 12 15:05:17 Greenwich Mean Time"
+
+-- Helpers
+
+trim :: String -> String
+trim = f . f
+   where f = reverse . dropWhile isSpace
+
+groupHighlights :: [Highlight] -> [BookHighlights]
+groupHighlights hs = map mkGroup grouped
+  where
+    grouped = groupBy ( (==) `on` bBook) hs
+    mkGroup bs = BookHighlights (bBook $ head bs) bs
+
+bookHighlightToBlock :: BookHighlights -> Block
+bookHighlightToBlock h = Div nullAttr [header, quotes]
+  where
+    headerString = (bTitle book) ++ " (by " ++ bAuthor book ++ ")"
+    header = Header 3 nullAttr [Str $ headerString]
+    quotes = BulletList $ map quoteForHighlight (highlights h)
+    quoteForHighlight highlight = [Para [Str $ bContent highlight]]
+    book = highlightsBook h
+
+highlightsToPandoc :: [BookHighlights] -> Pandoc
+highlightsToPandoc hs = Pandoc meta (map bookHighlightToBlock hs)
+  where
+    meta = Meta $ M.fromList [("title", MetaString $ "My Kindle Book Highlights"),
+                              ("date", MetaString $ "October 31 2015")]
