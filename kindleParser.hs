@@ -1,6 +1,8 @@
 import Control.Monad
 import Text.Parsec
 import Data.List
+import System.Environment
+import Data.Maybe
 
 data Book = Book {
   bTitle :: String,
@@ -9,12 +11,11 @@ data Book = Book {
 
 data Highlight = Highlight  {
   bBook :: Book,
-  bPage :: Int,
+  bPage :: Maybe Int,
   bLoc :: String,
   bTime :: String,
   bContent :: String
 } deriving (Eq, Show)
-
 
 {-
  Possible options for the highlight location:
@@ -25,27 +26,30 @@ data Highlight = Highlight  {
  Title line := anychars '(' author ')' endOfLine
  author := anychars
 
-  (a b c)
-  (a (b d) c)
+
+- Your Highlight on page 125 | Location 1907-1908 | Added on Tuesday
+- Your Highlight on Location 941-943 | Added on Tuesday, March 17, 2015 6:22:21 AM
 
 -}
 
 data RTree a = Leaf a | Node [RTree a] deriving (Eq, Show)
 
 parseParenExpr :: HighlightParser (RTree String)
-parseParenExpr = leaf <|> tree
+parseParenExpr = try tree <|> leaf
   where
     tree = do
       char '('
       ls <- many1 parseParenExpr
       char ')'
       return $ Node ls
-    leaf = many1 (noneOf "()") >>= return . Leaf
+    --leaf = many1 (noneOf "()") >>= return . Leaf
+    leaf = many1 (anyChar) >>= return . Leaf
 
 main :: IO ()
 main = do
-  f <- readFile "/Users/rafal/Desktop/manyTags"
---  print f
+  args <- getArgs
+  let filename = head args
+  f <- readFile filename
   parseTest parseHighlights f
 
 nat :: HighlightParser Int
@@ -53,27 +57,32 @@ nat = many1 digit >>= return . read
 
 type HighlightParser = Parsec String ()
 
-
-
 parseHighlights :: HighlightParser [Highlight]
 parseHighlights = many1 unitParser
   where
-    unitParser = parseHighlight >>= \h -> skipMany (char '=') >> (endOfLine >> return ()) >> return h
+    unitParser = skipMany zeroWidthSpace >> parseHighlight >>= \h -> skipMany (char '=') >> (endOfLine >> return ()) >> return h
 
 zeroWidthSpace = char '\65279'
 
+-- manyTill that returns the match for the end parser also
+manyTill2 :: Parsec s u a -> Parsec s u b -> Parsec s u ([a],b)
+manyTill2 p end = scan
+  where
+    scan = (end >>= \x -> return $ ([], x)) <|> do
+      x <- p
+      (xs, b) <- scan
+      return $ (x : xs, b)
+
 parseBook :: HighlightParser Book
 parseBook = do
-  title <- bookTitleParser
-  author <- authorParser
-  return $ Book (concat . intersperse " " $ title) author
+  (title, author) <- manyTill2 anyChar (try authorParser)
+  return $ Book title author
   where
-    bookTitleParser = skipMany zeroWidthSpace >> sepBy1 (many (alphaNum <|> oneOf ":'")) space
-    authorParser = between (char '(') (char ')') (many (letter <|> space <|> oneOf ".,'"))
+    authorParser = between (char '(') (char ')') (many $ noneOf "()") >>= \a -> (eof <|> (endOfLine >> return ())) >> return a
 
 parseHighlight :: HighlightParser Highlight
 parseHighlight = do
-  book <- parseBook >>= \b -> endOfLine >> return b
+  book <- parseBook
   (i,loc,time) <- parseDataLine
   skipMany (space <|> newline)
   content <- manyTill anyChar (eof <|> (endOfLine >> return ()))
@@ -81,31 +90,45 @@ parseHighlight = do
 
 
 lexeme :: Parsec String u a -> Parsec String u a
-lexeme p = p >>= \x -> spaces >> return x
+lexeme p = p <* spaces
 
+-- Looks like some of them don't have a Page, only a location.
 parseHighlightPage :: HighlightParser Int
-parseHighlightPage = (string "Highlight" <|> string "Bookmark") >> spaces >> string "on Page" >> space >> nat
+parseHighlightPage = (string "Page" <|> string "page") >> space >> nat
+
+parseHighlightPagePreamble :: HighlightParser ()
+parseHighlightPagePreamble =
+  optional (string "Your ") >>
+  (string "Highlight" <|> string "Bookmark") >>
+  spaces >> string "on" >> return ()
 
 parseLoc :: HighlightParser String
-parseLoc = string "Loc." >> spaces >> many1 (digit <|> char '-')
+parseLoc = (try (string "Loc.") <|> string "Location")  >> spaces >> many1 (digit <|> char '-')
 
 parseAddedTime :: HighlightParser String
 parseAddedTime = do
   string "Added on" >> spaces >> manyTill anyChar ( (endOfLine >> return ()) <|> eof)
 
-parseDataLine :: HighlightParser (Int,String,String)
+parseDataLine :: HighlightParser (Maybe Int,String,String)
 parseDataLine = do
   lexeme $ char '-'
-  page <- lexeme parseHighlightPage
-  lexeme (char '|')
-  loc <- lexeme parseLoc
-  lexeme (char '|')
-  time <- lexeme parseAddedTime
-  return (page,loc,time)
-
+  lexeme $ parseHighlightPagePreamble
+  page <- optionMaybe $ try (lexeme parseHighlightPage)
+  case (isJust page) of
+    True ->
+      do
+        lexeme (char '|')
+        loc <- lexeme parseLoc
+        lexeme (char '|')
+        time <- lexeme parseAddedTime
+        return (page,loc,time)
+    False ->
+      do
+        loc <- lexeme parseLoc
+        lexeme (char '|')
+        time <- lexeme parseAddedTime
+        return (page,loc,time)
 
 sampleStr = "Technological Slavery (Theodore J. Kaczynski)"
-
 sampleHighlightPage = "Highlight on Page 29"
-
 sampleDataLine = "- Highlight on Page 1089 | Loc. 16686-90  | Added on Wednesday, 4 January 12 15:05:17 Greenwich Mean Time"
