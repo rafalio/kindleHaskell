@@ -27,7 +27,7 @@ data Highlight = Highlight  {
   bBook :: Book,
   bPage :: Maybe Int,
   bLoc :: String,
-  bTime :: String,
+  bTime :: UTCTime,
   bContent :: String
 } deriving (Eq, Show)
 
@@ -52,6 +52,14 @@ type HighlightParser = Parsec String ()
 
 - Your Highlight on page 125 | Location 1907-1908 | Added on Tuesday
 - Your Highlight on Location 941-943 | Added on Tuesday, March 17, 2015 6:22:21 AM
+
+
+
+Two possible date formats I've seen:
+
+7 April 12 12:59:50 Greenwich Mean Time
+Saturday, July 18, 2015 3:44:29 AM
+
 -}
 
 {-data RTree a = Leaf a | Node [RTree a] deriving (Eq, Show)-}
@@ -148,18 +156,21 @@ parseLoc = do
   lexeme $ (try (string "Loc.") <|> string "Location")
   many1 (digit <|> char '-')
 
-parseAddedTime :: HighlightParser String
+parseAddedTime :: HighlightParser UTCTime
 parseAddedTime = do
   lexeme $ string "Added on"
-  manyTill anyChar (lookAhead endOfLine)
-    {-where-}
-      {-timeParse = parseTimeM True defaultTimeLocale timeFormatString-}
-      {-timeFormatString = "%A, %e %B %y %H:%M:%S"-}
-      {-gmtParser = string "Greenwich Mean Time"-}
+  chars <- manyTill anyChar (lookAhead endOfLine)
+  choice $ fmap (\x -> timeParse x chars) timeFormats
+    where
+      timeFormats = [
+          "%A, %e %B %y %H:%M:%S Greenwich Mean Time",
+          "%A, %B %e, %Y %H:%M:%S %p Greenwich Mean Time",
+          "%e %B %y %H:%M:%S",
+          "%A, %B %e, %Y %l:%M:%S %p"
+          ]
+      timeParse = parseTimeM True defaultTimeLocale
 
-
-
-parseDataLine :: HighlightParser (Maybe Int,String,String)
+parseDataLine :: HighlightParser (Maybe Int,String,UTCTime)
 parseDataLine = do
   lexeme $ char '-'
   lexeme $ parseHighlightPagePreamble
