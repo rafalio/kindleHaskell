@@ -10,6 +10,9 @@ import Text.Pandoc.Definition
 import Text.Pandoc.Writers.Markdown
 import Text.Pandoc.Options
 
+import Data.Time.Format
+import Data.Time.Clock
+import Data.Time.LocalTime
 
 import Data.Default
 import qualified Data.Map.Lazy as M
@@ -28,11 +31,15 @@ data Highlight = Highlight  {
   bContent :: String
 } deriving (Eq, Show)
 
+instance Ord Highlight where
+  compare = compare `on` bTime
 
 data BookHighlights = BookHighlights {
   highlightsBook :: Book,
   highlights :: [Highlight]
 } deriving (Eq, Show)
+
+type HighlightParser = Parsec String ()
 
 {-
  Possible options for the highlight location:
@@ -43,24 +50,21 @@ data BookHighlights = BookHighlights {
  Title line := anychars '(' author ')' endOfLine
  author := anychars
 
-
 - Your Highlight on page 125 | Location 1907-1908 | Added on Tuesday
 - Your Highlight on Location 941-943 | Added on Tuesday, March 17, 2015 6:22:21 AM
-
 -}
 
-data RTree a = Leaf a | Node [RTree a] deriving (Eq, Show)
+{-data RTree a = Leaf a | Node [RTree a] deriving (Eq, Show)-}
 
-parseParenExpr :: HighlightParser (RTree String)
-parseParenExpr = try tree <|> leaf
-  where
-    tree = do
-      char '('
-      ls <- many1 parseParenExpr
-      char ')'
-      return $ Node ls
-    --leaf = many1 (noneOf "()") >>= return . Leaf
-    leaf = many1 (anyChar) >>= return . Leaf
+{-parseParenExpr :: HighlightParser (RTree String)-}
+{-parseParenExpr = try tree <|> leaf-}
+  {-where-}
+    {-tree = do-}
+      {-char '('-}
+      {-ls <- many1 parseParenExpr-}
+      {-char ')'-}
+      {-return $ Node ls-}
+    {-leaf = many1 (anyChar) >>= return . Leaf-}
 
 main :: IO ()
 main = do
@@ -69,27 +73,32 @@ main = do
   f <- readFile filename
   let e = parse parseHighlights "" f
   either (\a -> print $ "Parsing failed: " ++ (show a))
-         (\v -> writeFile "kindle_book_highlights.markdown"
+         (\v -> writeFile "2015-11-01-kindle-book-highlights.markdown"
                           (writeMarkdown writerOpts (highlightsToPandoc $ groupHighlights v) )
          )
          e
   where
     writerOpts = def { writerStandalone = True,
-                      writerTemplate = "$titleblock$\n\n$body$"}
+                       writerTemplate = "$titleblock$\n\n\n$body$"
+                     }
 
+parseHighlightFile :: FilePath -> IO (Either ParseError [Highlight])
+parseHighlightFile filename = do
+  f <- readFile filename
+  return $ parse parseHighlights "" f
+
+{-prettyPrintResult filepath = do-}
+  {-parsed <- parseHighlightFile filepath-}
+  {-return $ fmap (mapM_ (putStrLn . show)) parsed-}
 
 
 nat :: HighlightParser Int
 nat = many1 digit >>= return . read
 
-type HighlightParser = Parsec String ()
-
 parseHighlights :: HighlightParser [Highlight]
-parseHighlights = many1 unitParser
-  where
-    unitParser = skipMany zeroWidthSpace >> parseHighlight >>= \h -> skipMany (char '=') >> (endOfLine >> return ()) >> return h
+parseHighlights = endBy parseHighlight sepLine
 
-zeroWidthSpace = char '\65279'
+sepLine = skipMany (char '=') >> endOfLine
 
 -- manyTill that returns the match for the end parser also
 manyTill2 :: Parsec s u a -> Parsec s u b -> Parsec s u ([a],b)
@@ -102,39 +111,53 @@ manyTill2 p end = scan
 
 parseBook :: HighlightParser Book
 parseBook = do
+  skipSpaces
   (title, author) <- manyTill2 anyChar (try authorParser)
   return $ Book (trim title) author
   where
-    authorParser = between (char '(') (char ')') (many $ noneOf "()") >>= \a -> (eof <|> (endOfLine >> return ())) >> return a
+    authorParser = between (char '(') (char ')') (many $ noneOf "()") >>= \a -> (endOfLine >> return ()) >> return a
 
 parseHighlight :: HighlightParser Highlight
 parseHighlight = do
   book <- parseBook
   (i,loc,time) <- parseDataLine
-  skipMany (space <|> newline)
-  content <- manyTill anyChar (eof <|> (endOfLine >> return ()))
+  content <- manyTill anyChar (endOfLine <|> lookAhead sepLine)
   return $ Highlight book i loc time content
 
-
 lexeme :: Parsec String u a -> Parsec String u a
-lexeme p = p <* spaces
+lexeme p = p <* skipSpaces
+
+skipSpaces = skipMany (space <|> zeroWidthSpace)
+  where
+    zeroWidthSpace = char '\65279'
 
 -- Looks like some of them don't have a Page, only a location.
 parseHighlightPage :: HighlightParser Int
-parseHighlightPage = (string "Page" <|> string "page") >> space >> nat
+parseHighlightPage = do 
+  lexeme $ string "Page" <|> string "page"
+  nat
 
 parseHighlightPagePreamble :: HighlightParser ()
-parseHighlightPagePreamble =
-  optional (string "Your ") >>
-  (string "Highlight" <|> string "Bookmark") >>
-  spaces >> string "on" >> return ()
+parseHighlightPagePreamble = do
+  lexeme $ optional (string "Your")
+  lexeme $ (string "Highlight" <|> string "Bookmark")
+  optional (string "on")
 
 parseLoc :: HighlightParser String
-parseLoc = (try (string "Loc.") <|> string "Location")  >> spaces >> many1 (digit <|> char '-')
+parseLoc = do
+  lexeme $ (try (string "Loc.") <|> string "Location")
+  many1 (digit <|> char '-')
 
 parseAddedTime :: HighlightParser String
 parseAddedTime = do
-  string "Added on" >> spaces >> manyTill anyChar ( (endOfLine >> return ()) <|> eof)
+  lexeme $ string "Added on"
+  manyTill anyChar (lookAhead endOfLine)
+    {-where-}
+      {-timeParse = parseTimeM True defaultTimeLocale timeFormatString-}
+      {-timeFormatString = "%A, %e %B %y %H:%M:%S"-}
+      {-gmtParser = string "Greenwich Mean Time"-}
+
+
 
 parseDataLine :: HighlightParser (Maybe Int,String,String)
 parseDataLine = do
@@ -156,13 +179,6 @@ parseDataLine = do
         time <- lexeme parseAddedTime
         return (page,loc,time)
 
-
--- Sample stuff
-
-sampleStr = "Technological Slavery (Theodore J. Kaczynski)"
-sampleHighlightPage = "Highlight on Page 29"
-sampleDataLine = "- Highlight on Page 1089 | Loc. 16686-90  | Added on Wednesday, 4 January 12 15:05:17 Greenwich Mean Time"
-
 -- Helpers
 
 trim :: String -> String
@@ -170,22 +186,26 @@ trim = f . f
    where f = reverse . dropWhile isSpace
 
 groupHighlights :: [Highlight] -> [BookHighlights]
-groupHighlights hs = map mkGroup grouped
+groupHighlights hs = sorted
   where
-    grouped = groupBy ( (==) `on` bBook) hs
+    sorted = sortOn (\group -> minimum (highlights group) ) (map mkGroup grouped)
+    grouped = groupBy ( (==) `on` bBook) (sortOn (bAuthor . bBook) hs)
     mkGroup bs = BookHighlights (bBook $ head bs) bs
 
-bookHighlightToBlock :: BookHighlights -> Block
-bookHighlightToBlock h = Div nullAttr [header, quotes]
+bookHighlightToBlock :: BookHighlights -> [Block]
+bookHighlightToBlock h = [header, quotes]
   where
     headerString = (bTitle book) ++ " (by " ++ bAuthor book ++ ")"
-    header = Header 3 nullAttr [Str $ headerString]
+    header = Header 1 nullAttr [Str $ headerString]
     quotes = BulletList $ map quoteForHighlight (highlights h)
     quoteForHighlight highlight = [Para [Str $ bContent highlight]]
     book = highlightsBook h
 
 highlightsToPandoc :: [BookHighlights] -> Pandoc
-highlightsToPandoc hs = Pandoc meta (map bookHighlightToBlock hs)
+highlightsToPandoc hs = Pandoc meta (concatMap bookHighlightToBlock hs)
   where
     meta = Meta $ M.fromList [("title", MetaString $ "My Kindle Book Highlights"),
-                              ("date", MetaString $ "October 31 2015")]
+                              ("date", MetaString $ "October 31 2015"),
+                              ("toc", MetaBool $ True)
+                              ]
+
