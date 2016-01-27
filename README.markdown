@@ -1,0 +1,1 @@
+Some parsec code to parse the format Kindle saves your highlights in into a manageable format. It's not cabalized or anything, and also currently depends on Pandoc as I generate markdown files from this. I'll clean up whenever I get some time.
