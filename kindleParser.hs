@@ -1,7 +1,6 @@
 import Control.Monad
 import Text.Parsec
 import Data.List
-import System.Environment
 import Data.Maybe
 import Data.Char
 import Data.Function
@@ -17,6 +16,11 @@ import Data.Time.LocalTime
 import Data.Default
 import qualified Data.Map.Lazy as M
 import qualified Data.Set as Set
+
+import System.Environment
+import System.Exit
+
+-- Types
 
 data Book = Book {
   bTitle :: String,
@@ -53,30 +57,16 @@ type HighlightParser = Parsec String ()
 - Your Highlight on page 125 | Location 1907-1908 | Added on Tuesday
 - Your Highlight on Location 941-943 | Added on Tuesday, March 17, 2015 6:22:21 AM
 
-
-
 Two possible date formats I've seen:
 
 7 April 12 12:59:50 Greenwich Mean Time
 Saturday, July 18, 2015 3:44:29 AM
-
 -}
-
-{-data RTree a = Leaf a | Node [RTree a] deriving (Eq, Show)-}
-
-{-parseParenExpr :: HighlightParser (RTree String)-}
-{-parseParenExpr = try tree <|> leaf-}
-  {-where-}
-    {-tree = do-}
-      {-char '('-}
-      {-ls <- many1 parseParenExpr-}
-      {-char ')'-}
-      {-return $ Node ls-}
-    {-leaf = many1 (anyChar) >>= return . Leaf-}
 
 main :: IO ()
 main = do
   args <- getArgs
+  if (null args) then (printHelp >> exitFailure) else return ()
   let filename = head args
   f <- readFile filename
   let e = parse parseHighlights "" f
@@ -89,19 +79,12 @@ main = do
     writerOpts = def { writerStandalone = True,
                        writerTemplate = "$titleblock$\n\n\n$body$"
                      }
+    printHelp = putStrLn "Usage: runhaskell kindleParser.hs clippingsFile.txt"
 
 parseHighlightFile :: FilePath -> IO (Either ParseError [Highlight])
 parseHighlightFile filename = do
   f <- readFile filename
   return $ parse parseHighlights "" f
-
-{-prettyPrintResult filepath = do-}
-  {-parsed <- parseHighlightFile filepath-}
-  {-return $ fmap (mapM_ (putStrLn . show)) parsed-}
-
-
-nat :: HighlightParser Int
-nat = many1 digit >>= return . read
 
 parseHighlights :: HighlightParser [Highlight]
 parseHighlights = endBy parseHighlight sepLine
@@ -120,10 +103,12 @@ manyTill2 p end = scan
 parseBook :: HighlightParser Book
 parseBook = do
   skipSpaces
-  (title, author) <- manyTill2 anyChar (try authorParser)
+  (title, author) <- manyTill2 anyChar (try $ authorParser <* endOfLine)
   return $ Book (trim title) author
   where
-    authorParser = between (char '(') (char ')') (many $ noneOf "()") >>= \a -> (endOfLine >> return ()) >> return a
+    authorParser = between 
+                       (char '(') (char ')') 
+                       (many $ noneOf "()")
 
 parseHighlight :: HighlightParser Highlight
 parseHighlight = do
@@ -132,23 +117,13 @@ parseHighlight = do
   content <- manyTill anyChar (endOfLine <|> lookAhead sepLine)
   return $ Highlight book i loc time content
 
-lexeme :: Parsec String u a -> Parsec String u a
-lexeme p = p <* skipSpaces
-
-skipSpaces = skipMany (space <|> zeroWidthSpace)
-  where
-    zeroWidthSpace = char '\65279'
-
--- Looks like some of them don't have a Page, only a location.
 parseHighlightPage :: HighlightParser Int
-parseHighlightPage = do 
-  lexeme $ string "Page" <|> string "page"
-  nat
+parseHighlightPage = (lexeme $ caseInsensitiveString "Page") *> nat
 
 parseHighlightPagePreamble :: HighlightParser ()
 parseHighlightPagePreamble = do
   lexeme $ optional (string "Your")
-  lexeme $ (string "Highlight" <|> string "Bookmark")
+  lexeme $ choice [string "Highlight", string "Bookmark"]
   optional (string "on")
 
 parseLoc :: HighlightParser String
@@ -162,7 +137,7 @@ parseAddedTime = do
   chars <- manyTill anyChar (lookAhead endOfLine)
   choice $ fmap (\x -> timeParse x chars) timeFormats
     where
-      timeFormats = [
+      timeFormats = [ -- Because why not, Kindle format picks whatever it wants.
           "%A, %e %B %y %H:%M:%S Greenwich Mean Time",
           "%A, %B %e, %Y %H:%M:%S %p Greenwich Mean Time",
           "%e %B %y %H:%M:%S",
@@ -170,11 +145,11 @@ parseAddedTime = do
           ]
       timeParse = parseTimeM True defaultTimeLocale
 
-parseDataLine :: HighlightParser (Maybe Int,String,UTCTime)
+parseDataLine :: HighlightParser (Maybe Int, String, UTCTime)
 parseDataLine = do
   lexeme $ char '-'
   lexeme $ parseHighlightPagePreamble
-  page <- optionMaybe $ try (lexeme parseHighlightPage)
+  page <- optionMaybe $ lexeme $ try parseHighlightPage
   case (isJust page) of
     True ->
       do
@@ -195,6 +170,23 @@ parseDataLine = do
 trim :: String -> String
 trim = f . f
    where f = reverse . dropWhile isSpace
+
+lexeme :: Parsec String u a -> Parsec String u a
+lexeme p = p <* skipSpaces
+
+-- Who knows why, sometimes there is a zero-width space separating things!
+skipSpaces :: Parsec String u ()
+skipSpaces = skipMany (space <|> zeroWidthSpace)
+  where
+    zeroWidthSpace = char '\65279'
+
+caseInsensitiveString :: String -> Parsec String u String
+caseInsensitiveString s = sequence [choice [char $ toLower c, char $ toUpper c] | c <- s]
+
+nat :: Parsec String u Int
+nat = many1 digit >>= return . read
+
+-- Pandoc Generators
 
 groupHighlights :: [Highlight] -> [BookHighlights]
 groupHighlights hs = sorted
