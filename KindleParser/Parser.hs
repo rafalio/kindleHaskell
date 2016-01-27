@@ -13,7 +13,9 @@ module KindleParser.Parser (
  author := anychars
 
 - Your Highlight on page 125 | Location 1907-1908 | Added on Tuesday
+- Your Highlight on Page 125 | Location 1907-1908 | Added on Tuesday
 - Your Highlight on Location 941-943 | Added on Tuesday, March 17, 2015 6:22:21 AM
+- Your Highlight on Loc. 941-943 | Added on Tuesday, March 17, 2015 6:22:21 AM
 
 Two possible date formats I've seen:
 
@@ -32,6 +34,9 @@ import KindleParser.Types
 import KindleParser.ParserUtils
 
 type HighlightParser = Parsec String ()
+type Page = Int
+type Location = String
+type DateAdded = UTCTime
 
 parseHighlightString :: String -> Either ParseError [Highlight]
 parseHighlightString = parse parseHighlights ""
@@ -58,7 +63,7 @@ parseHighlight = do
   content <- manyTill anyChar (endOfLine <|> lookAhead sepLine)
   return $ Highlight book i loc time content
 
-parseHighlightPage :: HighlightParser Int
+parseHighlightPage :: HighlightParser Page
 parseHighlightPage = (lexeme $ caseInsensitiveString "Page") *> nat
 
 parseHighlightPagePreamble :: HighlightParser ()
@@ -67,12 +72,12 @@ parseHighlightPagePreamble = do
   lexeme $ choice [string "Highlight", string "Bookmark"]
   optional (string "on")
 
-parseLoc :: HighlightParser String
+parseLoc :: HighlightParser Location
 parseLoc = do
   lexeme $ (try (string "Loc.") <|> string "Location")
   many1 (digit <|> char '-')
 
-parseAddedTime :: HighlightParser UTCTime
+parseAddedTime :: HighlightParser DateAdded
 parseAddedTime = do
   lexeme $ string "Added on"
   chars <- manyTill anyChar (lookAhead endOfLine)
@@ -86,24 +91,13 @@ parseAddedTime = do
           ]
       timeParse = parseTimeM True defaultTimeLocale
 
-parseDataLine :: HighlightParser (Maybe Int, String, UTCTime)
+parseDataLine :: HighlightParser (Maybe Page, Location, DateAdded)
 parseDataLine = do
   lexeme $ char '-'
   lexeme $ parseHighlightPagePreamble
-  page <- optionMaybe $ lexeme $ try parseHighlightPage
-  case (isJust page) of
-    True ->
-      do
-        lexeme (char '|')
-        loc <- lexeme parseLoc
-        lexeme (char '|')
-        time <- lexeme parseAddedTime
-        return (page,loc,time)
-    False ->
-      do
-        loc <- lexeme parseLoc
-        lexeme (char '|')
-        time <- lexeme parseAddedTime
-        return (page,loc,time)
-
-
+  mPage <- lexeme $ optionMaybe parseHighlightPage
+  lexeme $ optional (char '|')
+  loc <- lexeme parseLoc
+  lexeme $ char '|'
+  time <- lexeme parseAddedTime
+  return (mPage,loc,time)
