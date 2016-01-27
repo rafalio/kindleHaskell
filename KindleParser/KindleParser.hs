@@ -24,7 +24,8 @@ main = do
   f <- readFile filename
   let e = parse parseHighlights "" f
   either (\a -> print $ "Parsing failed: " ++ (show a))
-         (\v -> writeFile "2015-11-01-kindle-book-highlights.markdown"
+         (\v -> printHighlights v >> 
+                          writeFile "2015-11-01-kindle-book-highlights.markdown"
                           (writeMarkdown writerOpts (highlightListToPandoc v) )
          )
          e
@@ -36,3 +37,6 @@ main = do
 
 parseHighlightFile :: FilePath -> IO (Either ParseError [Highlight])
 parseHighlightFile f = readFile f >>= return . parseHighlightString
+
+printHighlights :: [Highlight] -> IO ()
+printHighlights = mapM_ (putStrLn . show)
